@@ -15,7 +15,6 @@ contract GammaController is BaseController {
     using SafeERC20 for IERC20;
     using Address for address;
     using SafeMath for uint256;
-
     IUniProxy public immutable uniProxy;
     uint256 public constant N_COINS = 2;
     
@@ -28,7 +27,7 @@ contract GammaController is BaseController {
         uniProxy = IUniProxy(_uniProxy);
     }
 
-    /// @notice Deploy liquidity to a Gamma Hypervisor
+    /// @notice Deploy liquidity to a Gamma Hypervisor ( controller owns assets, manager receives LP tokens )
     /// @dev Calls to external contract
     /// @dev We trust sender to send a true gamma lpTokenAddress. If it's not the case it will fail in the UniProxy deposit require.
     /// @param amount0 quantity of token0 of Hypervisor 
@@ -37,11 +36,12 @@ contract GammaController is BaseController {
     function deploy(
       uint256 amount0,
       uint256 amount1,
-      address lpTokenAddress 
+      address lpTokenAddress,
+	  uint256 minMintAmount
     ) external onlyManager {
 
-        uint256 balance0 = IHypervisor(lpTokenAddress).token0().balanceOf(address(this));
-        uint256 balance1 = IHypervisor(lpTokenAddress).token1().balanceOf(address(this));
+        uint256 balance0 = IHypervisor(lpTokenAddress).token0().balanceOf(manager);
+        uint256 balance1 = IHypervisor(lpTokenAddress).token1().balanceOf(manager);
 
         require(balance0 >= amount0 && balance1 >= amount1, "INSUFFICIENT_BALANCE");
 
@@ -49,16 +49,16 @@ contract GammaController is BaseController {
         _approve(IHypervisor(lpTokenAddress).token0(), lpTokenAddress, amount0);
         _approve(IHypervisor(lpTokenAddress).token1(), lpTokenAddress, amount1);
 
-        uint256 lpTokenBalanceBefore = IERC20(lpTokenAddress).balanceOf(address(this));
+        uint256 lpTokenBalanceBefore = IERC20(lpTokenAddress).balanceOf(manager);
         // deposit amount0, amount1 and mint LP tokens to the manager 
-        uint256 lpTokenReceived = uniProxy.deposit(amount0, amount1, manager, address(this), lpTokenAddress);
+        uint256 lpTokenReceived = uniProxy.deposit(amount0, amount1, manager, lpTokenAddress);
 
-        uint256 lpTokenBalanceAfter = IERC20(lpTokenAddress).balanceOf(address(this));
+        uint256 lpTokenBalanceAfter = IERC20(lpTokenAddress).balanceOf(manager);
         require(lpTokenBalanceBefore + lpTokenReceived == lpTokenBalanceAfter, "LP_TOKEN_MISMATCH");
-
+				require(lpTokenReceived >= minMintAmount, "INSUFFICIENT_MINT");
     }
 
-    /// @notice Withdraw liquidity from Hypervisor 
+    /// @notice Withdraw liquidity from Hypervisor ( controller owns LP tokens, controller receives assets ) 
     /// @dev Calls to external contract
     /// @dev We trust sender to send a true gamma lpTokenAddress. If it's not the case it will fail in the UniProxy deposit require.
     /// @param lpTokenAddress LP Token(Hypervisor) address
@@ -66,14 +66,15 @@ contract GammaController is BaseController {
     function withdraw(
         address lpTokenAddress,
         uint256 amount,
+        uint256[N_COINS] memory minAmounts
     ) external onlyManager {
         
-        uint256 lpTokenBalanceBefore = IERC20(lpTokenAddress).balanceOf(address(this));
+        uint256 lpTokenBalanceBefore = IERC20(lpTokenAddress).balanceOf(manager);
         uint256[N_COINS] memory coinsBalancesBefore = _getCoinsBalances(lpTokenAddress);
 
-        IHypervisor(lpTokenAddress).withdraw(amount, address(this));
+        IHypervisor(lpTokenAddress).withdraw(amount, manager, manager);
 
-        uint256 lpTokenBalanceAfter = IERC20(lpTokenAddress).balanceOf(address(this));
+        uint256 lpTokenBalanceAfter = IERC20(lpTokenAddress).balanceOf(manager);
         uint256[N_COINS] memory coinsBalancesAfter = _getCoinsBalances(lpTokenAddress);
 
         _compareCoinsBalances(coinsBalancesBefore, coinsBalancesAfter, minAmounts);
@@ -87,8 +88,8 @@ contract GammaController is BaseController {
     }
 
     function _getCoinsBalances(address lpTokenAddress) internal returns (uint256[N_COINS] memory coinsBalances) {
-        coinsBalances[0] = IHypervisor(lpTokenAddress).token0().balanceOf(address(this));
-        coinsBalances[1] = IHypervisor(lpTokenAddress).token1().balanceOf(address(this));
+        coinsBalances[0] = IHypervisor(lpTokenAddress).token0().balanceOf(manager);
+        coinsBalances[1] = IHypervisor(lpTokenAddress).token1().balanceOf(manager);
         return coinsBalances;
     }
 
